@@ -4,6 +4,34 @@ A single-instrument limit order book and matching engine in C++, built for laten
 
 ---
 
+## Table of Contents
+
+- [Goal](#goal)
+- [What the System Does](#what-the-system-does)
+- [Design](#design)
+  - [Engine](#engine)
+  - [Agents](#agents)
+  - [Execution Modes](#execution-modes)
+  - [Architecture](#architecture)
+  - [Concurrency](#concurrency)
+  - [Market Data Feed](#market-data-feed)
+- [Benchmark Methodology](#benchmark-methodology)
+- [Market Design Laboratory](#market-design-laboratory)
+- [API](#api)
+- [Setup and Development](#setup-and-development)
+  - [Prerequisites](#prerequisites)
+  - [Clone and Build](#clone-and-build)
+  - [Pre-commit Hooks](#pre-commit-hooks)
+  - [Workflow: Issues, Branches, and PRs](#workflow-issues-branches-and-prs)
+  - [Commit Message Format](#commit-message-format)
+  - [Branch Naming Convention](#branch-naming-convention)
+  - [What Happens Automatically](#what-happens-automatically)
+- [Layout](#layout)
+- [Scope and Honesty](#scope-and-honesty)
+- [Milestones](#milestones)
+
+---
+
 ## Goal
 
 Three claims, each backed by an artifact in this repository:
@@ -18,7 +46,7 @@ The engine's speed is not an end in itself here. It is the enabling constraint: 
 
 ---
 
-## What the system does
+## What the System Does
 
 ```
 config + seed → agents → orders → [matching engine] → feed → analytics
@@ -55,7 +83,7 @@ Each agent has its own RNG stream seeded from `(global_seed, agent_id)`, its own
 - **Informed traders** — act on a noisy, delayed estimate of `V(t)`. What anchors price to the fundamental, and what makes market making risky.
 - **Momentum traders** — react to recent signed trade flow. Source of amplification and instability.
 
-### Execution modes
+### Execution Modes
 
 | Mode | Clock | Driver | Determinism |
 |---|---|---|---|
@@ -91,13 +119,13 @@ The headline result is **p99 latency against offered load** for all four configu
 
 Configuration C is also how experiment sweeps are run: independent replications are perfectly parallel.
 
-### Market data feed
+### Market Data Feed
 
 ITCH-style binary: `AddOrder`, `OrderExecuted`, `OrderCancelled`, `OrderReplaced`, `Trade`, each with a monotonic sequence number, plus periodic snapshots for late joiners. A `reconstruct` tool rebuilds the book from a recorded feed and asserts it matches the engine's final state — both a correctness test and proof that the feed is complete.
 
 ---
 
-## Benchmark methodology
+## Benchmark Methodology
 
 - **Open loop.** Arrival schedule is fixed in advance; if the engine falls behind, the lateness is measured. A closed-loop harness would silently hide queueing delay (coordinated omission).
 - **Percentiles, never means.** p50 / p90 / p99 / p99.9 / max, into HDR histograms recorded in pre-allocated storage.
@@ -110,7 +138,7 @@ ITCH-style binary: `AddOrder`, `OrderExecuted`, `OrderCancelled`, `OrderReplaced
 
 ---
 
-## Market design laboratory
+## Market Design Laboratory
 
 The primary interface is not a trading screen — it is an experiment designer. You choose a baseline market configuration, pick parameters to sweep, run replications, and compare outcomes.
 
@@ -126,14 +154,14 @@ The primary interface is not a trading screen — it is an experiment designer. 
 - *Welfare split* — market maker P&L, informed trader P&L, noise trader costs, fees collected. Most rule changes move value rather than destroying it; showing where is the point.
 - *Fragility* — recovery time after a liquidity shock, worst gap, depth resilience.
 
-### Experimental discipline
+### Experimental Discipline
 
 - **Common random numbers** across compared configurations, so differences are attributable to the rule change rather than to luck.
 - **Replications with confidence intervals.** No single-run results, no bar charts without error bars.
 - **Burn-in** discarded before measurement, with the length stated.
 - **Baseline validation before any experiment.** The baseline must reproduce known stylized facts — fat-tailed returns, volatility clustering, square-root impact, imbalance predicting the next move — before comparative results from it mean anything.
 
-### Preset experiments
+### Preset Experiments
 
 - Tick size sweep: does a smaller tick narrow spreads, or fragment depth and erode queue priority?
 - Maker rebate sweep: how much of a rebate is passed through to the quoted spread?
@@ -300,7 +328,7 @@ The main payload. While the simulation is running, returns whatever has been com
 | `horizon_ns` | int64 | ns | Total simulated time requested |
 | `base_interval_ns` | int64 | ns | Candle width (100,000,000 = 100ms) |
 | `tick_size` | int | price units | Smallest price increment |
-| `price_scale` | int | | ticks ÷ price\_scale = display price |
+| `price_scale` | int | | ticks / price\_scale = display price |
 | `burn_in_ns` | int64 | ns | Discarded warm-up time before measurement |
 | `sim_wall_ms` | int64 | ms | Wall-clock time for the simulation; `null` while incomplete |
 
@@ -327,7 +355,7 @@ All arrays are the same length. Index `i` describes the same time window across 
 | `spread_ticks` | int32[] | Bid-ask spread in ticks |
 | `depth_bid` | int64[] | Total resting quantity on bid side, top 5 levels |
 | `depth_ask` | int64[] | Total resting quantity on ask side, top 5 levels |
-| `imbalance` | float[] | (depth\_bid − depth\_ask) / (depth\_bid + depth\_ask), range −1.0 to 1.0 |
+| `imbalance` | float[] | (depth\_bid - depth\_ask) / (depth\_bid + depth\_ask), range -1.0 to 1.0 |
 
 V(t) is the only data in the response that wouldn't exist in a real market. Overlaying it on the mid price chart shows the market discovering value — the unique advantage of a simulation. The frontend provides a toggle to show/hide it.
 
@@ -336,9 +364,9 @@ V(t) is the only data in the response that wouldn't exist in a real market. Over
 | Field | Type | Description |
 |---|---|---|
 | `time_weighted_spread_ticks` | float | Spread averaged over time, not over trades |
-| `effective_spread_bps` | float | What traders actually paid: `2 × |trade_price − mid| / mid` |
+| `effective_spread_bps` | float | What traders actually paid: `2 * |trade_price - mid| / mid` |
 | `realized_spread_bps` | float | What makers earned after adverse selection: uses mid 1s after trade |
-| `price_efficiency_rmse` | float | RMSE of |mid − V| in ticks |
+| `price_efficiency_rmse` | float | RMSE of |mid - V| in ticks |
 | `realized_volatility` | float | Std dev of returns at sampling interval |
 | `fill_ratio` | float | Fraction of submitted limit orders that filled |
 | `median_time_to_fill_ns` | int64 | Median time from submission to fill for limit orders |
@@ -397,7 +425,7 @@ Each entry in `latency_ns` (`overall`, `limit_resting`, `limit_crossing`, `cance
 
 #### Progressive rendering
 
-While `complete` is `false`, the frontend polls the result endpoint every 1–2 seconds. Candle and series arrays grow — the backend appends but never revises earlier entries. The chart extends to the right. Engine stats update cumulatively. `market_quality` and `agents` remain `null` until the run finishes.
+While `complete` is `false`, the frontend polls the result endpoint every 1-2 seconds. Candle and series arrays grow — the backend appends but never revises earlier entries. The chart extends to the right. Engine stats update cumulatively. `market_quality` and `agents` remain `null` until the run finishes.
 
 The backend writes candles in strict time order. A candle at time `t` is finalized before the simulation advances past `t + base_interval_ns`. No global post-processing is applied to the candle array — everything is computable incrementally.
 
@@ -411,7 +439,181 @@ Signals the simulation to stop, discards partial results.
 
 ---
 
-## Scope and honesty
+## Setup and Development
+
+### Prerequisites
+
+- **C++20 compiler**: GCC 12+ or Clang 15+
+- **CMake** 3.20+
+- **Python** 3.8+ (for pre-commit hooks)
+- **GitHub CLI** (`gh`): install with `winget install --id GitHub.cli` (Windows) or your package manager, then `gh auth login`
+- **LLVM/Clang tools**: install with `winget install LLVM.LLVM` (Windows) or your package manager — provides `clang-format` and `clang-tidy`
+- **pre-commit**: `pip install pre-commit`
+
+### Clone and Build
+
+```bash
+git clone https://github.com/tudor-stack/Market-simulator.git
+cd Market-simulator
+cmake -B build
+cmake --build build
+```
+
+Running `cmake -B build` automatically installs the pre-commit hooks if `pre-commit` is on your PATH. If not, install them manually:
+
+```bash
+pre-commit install
+pre-commit install --hook-type commit-msg
+pre-commit install --hook-type pre-push
+```
+
+### Pre-commit Hooks
+
+The following hooks run automatically on every commit:
+
+| Hook | What it does | When |
+|---|---|---|
+| `trailing-whitespace` | Removes trailing whitespace | pre-commit |
+| `end-of-file-fixer` | Ensures files end with a newline | pre-commit |
+| `check-yaml` | Validates YAML syntax | pre-commit |
+| `check-json` | Validates JSON syntax | pre-commit |
+| `clang-format` | Formats C++ code to project style | pre-commit |
+| `commit-msg-format` | Enforces commit message format | commit-msg |
+| `branch-name-check` | Enforces branch naming convention | pre-push |
+
+Configuration lives in `.pre-commit-config.yaml`. C++ style is defined in `.clang-format`. Static analysis checks are defined in `.clang-tidy` (used in CI, not as a local hook).
+
+### Workflow: Issues, Branches, and PRs
+
+All work goes through tickets. No branch exists without an issue.
+
+**1. Create an issue**
+
+Go to Issues → New issue → pick one of the five forms:
+
+| Form | Label | Branch prefix |
+|---|---|---|
+| Feature | `type:feature` | `feature/` |
+| Bug | `type:bug` | `bugfix/` |
+| Performance | `type:perf` | `perf/` |
+| Experiment | `type:experiment` | `experiment/` |
+| Chore | `type:chore` | `chore/` |
+
+Keep the title short — it becomes part of the branch name.
+
+**2. Branch is created automatically**
+
+When you submit the issue, a GitHub Action reads the type label and title, and creates a branch:
+
+```
+<type>/<issue-number>_<title_lowercase_underscored>
+```
+
+For example, issue #42 "Cancel order by ID" with label `type:feature` becomes `feature/42_cancel_order_by_id`.
+
+The branch is linked to the issue in the Development sidebar. The title is truncated to 50 characters and stripped of punctuation.
+
+**3. Check out and work**
+
+```bash
+git fetch
+git checkout <branch-name>
+```
+
+Commit messages must follow this format:
+
+```
+<branch-name>: <description>
+```
+
+For example:
+
+```
+feature/42_cancel_order_by_id: implement cancel by order ID
+```
+
+The commit-msg hook rejects messages that don't match this format.
+
+**4. Open a PR**
+
+```bash
+git push origin <branch-name>
+gh pr create --title "<branch-name>: <description>" --body "Closes #<issue-number>"
+```
+
+The `Closes #N` in the PR body links the PR to the issue and auto-closes it on merge.
+
+**5. Merge**
+
+Squash merge on GitHub. On merge:
+- The issue closes (from `Closes #N`)
+- The branch is deleted automatically
+- The Project board card moves to Done
+
+### Commit Message Format
+
+Every commit message must match:
+
+```
+<type>/<number>_<name>: <message>
+```
+
+Examples:
+
+```
+feature/42_cancel_order_by_id: implement cancel logic
+bugfix/15_segfault_on_empty_book: add null check before dequeue
+chore/3_project_scaffold: add CMakeLists and stub main
+```
+
+The pre-commit hook enforces this. To bypass for infrastructure commits on `main` (rare): `git commit --no-verify`.
+
+### Branch Naming Convention
+
+```
+<type>/<issue-number>_<short_title>
+```
+
+- `type` is one of: `feature`, `bugfix`, `perf`, `experiment`, `chore`
+- `issue-number` is the GitHub issue number
+- `short_title` is lowercase, underscores instead of spaces, no punctuation
+
+A repository ruleset blocks creating branches that don't start with one of the five prefixes. Direct pushes to `main` are blocked — all changes go through PRs.
+
+### What Happens Automatically
+
+| Event | What happens |
+|---|---|
+| Issue created | Branch is auto-created and linked to the issue |
+| Issue added to repo | Appears on the Project board (Backlog) |
+| PR merged with `Closes #N` | Issue closes, branch deletes, board card moves to Done |
+| Issue closed manually | Linked branch is auto-deleted |
+
+---
+
+## Layout
+
+```
+engine/       matching core — no I/O, no threads, no dependencies
+feed/         binary market data encoding, sequencing, snapshots
+sim/          virtual clock, event queue, latency models, agents
+concurrency/  SPSC ring, cache-line utilities, thread pinning
+analytics/    microstructure metrics over recorded feeds
+experiments/  sweep runner, replication, common random numbers, statistics
+api/          HTTP server, JSON serialization, job registry
+gateway/      simulation driver: wires engine, agents, and analytics
+bench/        open-loop benchmark harness and histograms
+tools/        flowgen, replay, reconstruct, sweep CLIs
+tests/        unit, reference implementation, differential fuzz, determinism
+web/          browser client
+configs/      baseline, scenarios, experiment definitions
+docs/         design notes and experiment results
+scripts/      hook scripts and development utilities
+```
+
+---
+
+## Scope and Honesty
 
 **In scope:** matching engine, full order type set, binary feed, agent-based flow, threading comparison, benchmark harness, microstructure measurement, experiment runner, web interface for market design experiments.
 
@@ -434,34 +636,3 @@ Signals the simulation to stop, discards partial results.
 9. Baseline validation, preset experiments, writeup.
 
 Steps 3 and 4 stay in that order. A baseline measured after optimizing is not a baseline.
-
----
-
-## Build
-
-```sh
-cmake --preset release
-cmake --build --preset release
-ctest --preset release
-```
-
-Presets: `debug`, `release`, `asan`, `tsan`, `bench`.
-
-## Layout
-
-```
-engine/       matching core — no I/O, no threads, no dependencies
-feed/         binary market data encoding, sequencing, snapshots
-sim/          virtual clock, event queue, latency models, agents
-concurrency/  SPSC ring, cache-line utilities, thread pinning
-analytics/    microstructure metrics over recorded feeds
-experiments/  sweep runner, replication, common random numbers, statistics
-api/          HTTP server, JSON serialization, job registry
-gateway/      simulation driver: wires engine, agents, and analytics
-bench/        open-loop benchmark harness and histograms
-tools/        flowgen, replay, reconstruct, sweep CLIs
-tests/        unit, reference implementation, differential fuzz, determinism
-web/          browser client
-configs/      baseline, scenarios, experiment definitions
-docs/         design notes and experiment results
-```
