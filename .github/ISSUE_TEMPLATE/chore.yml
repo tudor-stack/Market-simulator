@@ -1,0 +1,17 @@
+name: Chore
+description: Build, CI, tooling, refactoring or docs
+labels: ["type:chore"]
+body:
+  - type: markdown
+    attributes:
+      value: "Branch: `chore/<issue-number>_short_title`"
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why

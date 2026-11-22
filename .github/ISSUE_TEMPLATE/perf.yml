@@ -1,0 +1,35 @@
+name: Performance
+description: Optimization of a measured hot path
+labels: ["type:perf"]
+body:
+  - type: markdown
+    attributes:
+      value: "Branch: `perf/<issue-number>_short_title`"
+  - type: input
+    id: target
+    attributes:
+      label: Target
+      description: Which code path (e.g. add-order, cancel-by-id, level lookup).
+    validations:
+      required: true
+  - type: textarea
+    id: baseline
+    attributes:
+      label: Baseline
+      description: Current numbers — throughput and p50 / p99 / p99.9 latency.
+    validations:
+      required: true
+  - type: textarea
+    id: hypothesis
+    attributes:
+      label: Hypothesis
+      description: What you will change and why it should be faster (cache misses, allocations, branches...).
+    validations:
+      required: true
+  - type: textarea
+    id: method
+    attributes:
+      label: Measurement method
+      description: Benchmark, machine, compiler and flags, number of runs.
+    validations:
+      required: true

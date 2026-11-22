@@ -1,0 +1,29 @@
+name: Feature
+description: New capability in the engine, simulator, backend or web UI
+labels: ["type:feature"]
+body:
+  - type: markdown
+    attributes:
+      value: "Branch: `feature/<issue-number>_short_title`"
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should exist after this is done, and why.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Concrete, testable conditions for "done".
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Design ideas, links, open questions.

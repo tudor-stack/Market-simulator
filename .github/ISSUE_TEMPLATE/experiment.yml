@@ -1,0 +1,32 @@
+name: Experiment
+description: Market microstructure experiment run on the simulator
+labels: ["type:experiment"]
+body:
+  - type: markdown
+    attributes:
+      value: "Branch: `experiment/<issue-number>_short_title`"
+  - type: textarea
+    id: hypothesis
+    attributes:
+      label: Hypothesis
+      description: What you expect to observe and why.
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Setup
+      description: Market rules, agent mix and parameters, horizon, seeds, what is varied.
+    validations:
+      required: true
+  - type: textarea
+    id: metrics
+    attributes:
+      label: Metrics
+      description: What is measured (spread, depth, impact, markout...).
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes

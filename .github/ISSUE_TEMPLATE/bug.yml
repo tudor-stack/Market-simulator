@@ -1,0 +1,36 @@
+name: Bug
+description: Something behaves incorrectly
+labels: ["type:bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "Branch: `bugfix/<issue-number>_short_title`"
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have happened
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal order sequence, test case or command.
+    validations:
+      required: true
+  - type: input
+    id: seed
+    attributes:
+      label: Seed / config
+      description: Simulation seed and config file, if relevant.
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: Commit hash where it was observed.
