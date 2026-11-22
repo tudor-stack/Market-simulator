@@ -61,9 +61,18 @@ Each agent has its own RNG stream seeded from `(global_seed, agent_id)`, its own
 |---|---|---|---|
 | Batch / experiment | virtual | live agents | byte-identical per seed |
 | Benchmark | none (open loop) | recorded flow tape | byte-identical per seed |
-| Interactive | `steady_clock` | live agents + human | replayable from order log |
 
-Same engine, same agent code, three harnesses. Benchmarks run against a deterministic tape so that measurement is reproducible; agents are never in the measured path.
+Same engine, same agent code, two harnesses. Benchmarks run against a deterministic tape so that measurement is reproducible; agents are never in the measured path.
+
+### Architecture
+
+The system is split into a C++ backend and a browser frontend, communicating over HTTP/JSON.
+
+The backend is a single C++ binary with an embedded HTTP server. It receives a simulation configuration, runs the engine and agents, and returns results. The core boundary is a function: `SimResult run_simulation(const SimConfig& config)`. Everything above it (HTTP, JSON parsing, job management) is a thin shell; everything below it (engine, agents, analytics) is the project.
+
+The frontend submits configurations, polls for progress, and renders results. During a run, the backend flushes computed data progressively — the chart grows from left to right as the simulation advances. Summary metrics arrive only when the run completes.
+
+No WebSockets. Five stateless HTTP endpoints handle all communication (see [API](#api) below).
 
 ### Concurrency
 
@@ -134,9 +143,277 @@ The primary interface is not a trading screen — it is an experiment designer. 
 
 ---
 
+## API
+
+Five endpoints. All JSON, all stateless HTTP.
+
+| # | Trigger | Method | Path | Frontend sends | Backend returns |
+|---|---|---|---|---|---|
+| 1 | App loads | `GET` | `/api/schema` | nothing | parameter metadata |
+| 2 | User hits Run | `POST` | `/api/simulations` | full config | run\_id |
+| 3 | Polling loop | `GET` | `/api/simulations/{id}` | nothing | status + progress |
+| 4 | During/after run | `GET` | `/api/simulations/{id}/result` | nothing | candles + series + metrics |
+| 5 | User hits Cancel | `DELETE` | `/api/simulations/{id}` | nothing | confirmation |
+
+### 1. `GET /api/schema` — parameter metadata
+
+Returns the definition of every configurable parameter: type, min, max, default, unit, allowed values. The frontend builds its config form from this rather than hardcoding fields, so adding a parameter later requires no frontend change.
+
+Covers: instrument settings, fundamental parameters, market rules, per-population-type strategy parameters, latency distribution options, and simulation settings (horizon, base interval, threading config).
+
+### 2. `POST /api/simulations` — submit a run
+
+Accepts the full simulation configuration. Validates every field against the schema. On success, returns `202` with a `run_id` and begins the simulation. On validation failure, returns `400` with a field-level error (`code`, `field`, `message`).
+
+The backend does not block until the simulation finishes — it returns immediately and the frontend polls for progress.
+
+#### Request body
+
+```jsonc
+{
+  "seed": 42,
+  "horizon_ns": 60000000000,          // 60 simulated seconds; min 1 min, max 24 hours
+  "base_interval_ns": 100000000,       // 100ms — the smallest candle
+
+  "instrument": {
+    "tick_size": 1,                    // smallest price increment, in price units
+    "initial_price": 10000,            // ticks
+    "lot_size": 1,                     // minimum order size
+    "price_band_ticks": 5000           // bounded tick range for the flat level array
+  },
+
+  "fundamental": {
+    "volatility_per_sec": 0.0002,      // explicit time unit
+    "jump_rate_per_sec": 0.0,
+    "jump_size": 0.0
+  },
+
+  "rules": {
+    "allocation": "price_time",        // "price_time" | "pro_rata"
+    "maker_fee_bps": -0.2,             // negative = rebate
+    "taker_fee_bps": 0.5,
+    "post_only_enabled": true,
+    "market_order_protection_ticks": 50,
+    "self_trade_prevention": "cancel_oldest"  // "none" | "cancel_oldest" | "cancel_newest" | "cancel_both"
+  },
+
+  "populations": [
+    {
+      "type": "noise",
+      "count": 200,
+      "params": {
+        "arrival_rate_per_sec": 5.0,
+        "market_order_prob": 0.3,
+        "size_dist":  { "kind": "lognormal", "mu": 4.0, "sigma": 1.0 },
+        "depth_dist": { "kind": "geometric", "p": 0.4 }
+      },
+      "feed_latency":  { "kind": "lognormal", "median_ns": 500000, "sigma": 0.8 },
+      "order_latency": { "kind": "lognormal", "median_ns": 300000, "sigma": 0.8 }
+    },
+    {
+      "type": "market_maker",
+      "count": 5,
+      "params": {
+        "half_spread_ticks": 2,
+        "quote_size": 100,
+        "refresh_ms": 50,
+        "inventory_limit": 1000,
+        "skew_factor": 0.002
+      },
+      "feed_latency":  { "kind": "lognormal", "median_ns": 20000, "sigma": 0.5 },
+      "order_latency": { "kind": "lognormal", "median_ns": 15000, "sigma": 0.5 }
+    },
+    {
+      "type": "informed",
+      "count": 10,
+      "params": {
+        "signal_noise": 0.3,
+        "signal_delay_ms": 100,
+        "threshold_ticks": 3,
+        "aggression": 0.5
+      },
+      "feed_latency":  { "kind": "lognormal", "median_ns": 50000, "sigma": 0.6 },
+      "order_latency": { "kind": "lognormal", "median_ns": 30000, "sigma": 0.6 }
+    },
+    {
+      "type": "momentum",
+      "count": 15,
+      "params": {
+        "lookback_ms": 500,
+        "aggression": 0.3,
+        "size_dist": { "kind": "lognormal", "mu": 3.0, "sigma": 0.8 }
+      },
+      "feed_latency":  { "kind": "lognormal", "median_ns": 200000, "sigma": 0.7 },
+      "order_latency": { "kind": "lognormal", "median_ns": 150000, "sigma": 0.7 }
+    }
+  ],
+
+  "engine": { "threading": "A" }
+}
+```
+
+Distributions are tagged unions: `{ "kind": "<name>", ...params }`. Supported kinds: `lognormal`, `uniform`, `constant`. Adding a distribution later does not break the schema.
+
+Each population has per-type strategy parameters under `params`, plus `feed_latency` and `order_latency` controlling how stale the agent's view is and how long its orders take to arrive at the engine.
+
+### 3. `GET /api/simulations/{id}` — poll status
+
+Lightweight. Returns the current state of a run.
+
+```jsonc
+// queued
+{ "run_id": "r_8f3a1b", "status": "queued" }
+
+// running — progress is simulated_time_elapsed / horizon
+{ "run_id": "r_8f3a1b", "status": "running", "progress": 0.42 }
+
+// done
+{ "run_id": "r_8f3a1b", "status": "completed" }
+
+// failed — field-level error when possible
+{ "run_id": "r_8f3a1b", "status": "failed",
+  "error": { "code": "degenerate_market",
+             "message": "book empty >90% of simulated time; add market makers" } }
+```
+
+Frontend polls every 500ms. Once `status` is `"running"`, it also begins fetching results for progressive rendering.
+
+### 4. `GET /api/simulations/{id}/result` — fetch data
+
+The main payload. While the simulation is running, returns whatever has been computed so far. Arrays grow as the simulation advances; summary metrics are `null` until `complete` is `true`.
+
+#### Response structure
+
+**Top level:**
+
+| Field | Type | Description |
+|---|---|---|
+| `run_id` | string | Server-assigned identifier |
+| `seed` | int64 | Echoed from request |
+| `config_hash` | string | SHA-256 of canonicalized config; same hash + seed = identical result |
+| `complete` | boolean | `false` while computing, `true` when final |
+
+**`meta` — simulation parameters echoed back:**
+
+| Field | Type | Unit | Description |
+|---|---|---|---|
+| `horizon_ns` | int64 | ns | Total simulated time requested |
+| `base_interval_ns` | int64 | ns | Candle width (100,000,000 = 100ms) |
+| `tick_size` | int | price units | Smallest price increment |
+| `price_scale` | int | | ticks ÷ price\_scale = display price |
+| `burn_in_ns` | int64 | ns | Discarded warm-up time before measurement |
+| `sim_wall_ms` | int64 | ms | Wall-clock time for the simulation; `null` while incomplete |
+
+**`candles` — columnar, base resolution (100ms), trade-price based:**
+
+| Field | Type | Description |
+|---|---|---|
+| `t` | int64[] | Bucket start time, ns since sim start (after burn-in) |
+| `o` | int64[] | Open price in ticks |
+| `h` | int64[] | High price in ticks |
+| `l` | int64[] | Low price in ticks |
+| `c` | int64[] | Close price in ticks |
+| `v` | int64[] | Total volume traded |
+| `n` | int32[] | Number of trades |
+
+All arrays are the same length. Index `i` describes the same time window across all of them. Empty buckets (no trades): `n = 0`, `v = 0`, `o = h = l = c` carried from previous close. Candles aggregate upward losslessly: the client produces 1s, 5s, or any multiple of 100ms candles purely locally — no re-request needed.
+
+**`series` — same time grid as candles, sampled at each candle boundary:**
+
+| Field | Type | Description |
+|---|---|---|
+| `mid` | int64[] | Mid price in ticks |
+| `fundamental` | int64[] | V(t) in ticks — the hidden true value |
+| `spread_ticks` | int32[] | Bid-ask spread in ticks |
+| `depth_bid` | int64[] | Total resting quantity on bid side, top 5 levels |
+| `depth_ask` | int64[] | Total resting quantity on ask side, top 5 levels |
+| `imbalance` | float[] | (depth\_bid − depth\_ask) / (depth\_bid + depth\_ask), range −1.0 to 1.0 |
+
+V(t) is the only data in the response that wouldn't exist in a real market. Overlaying it on the mid price chart shows the market discovering value — the unique advantage of a simulation. The frontend provides a toggle to show/hide it.
+
+**`market_quality` — summary statistics over the full run; `null` while incomplete:**
+
+| Field | Type | Description |
+|---|---|---|
+| `time_weighted_spread_ticks` | float | Spread averaged over time, not over trades |
+| `effective_spread_bps` | float | What traders actually paid: `2 × |trade_price − mid| / mid` |
+| `realized_spread_bps` | float | What makers earned after adverse selection: uses mid 1s after trade |
+| `price_efficiency_rmse` | float | RMSE of |mid − V| in ticks |
+| `realized_volatility` | float | Std dev of returns at sampling interval |
+| `fill_ratio` | float | Fraction of submitted limit orders that filled |
+| `median_time_to_fill_ns` | int64 | Median time from submission to fill for limit orders |
+
+**`agents[]` — per-population results; `null` while incomplete:**
+
+| Field | Type | Description |
+|---|---|---|
+| `type` | string | `"noise"` \| `"market_maker"` \| `"informed"` \| `"momentum"` |
+| `count` | int | Number of agents in this population |
+| `pnl_total` | float | Sum P&L across all agents of this type |
+| `pnl_mean` | float | Per-agent mean |
+| `pnl_std` | float | Per-agent standard deviation |
+| `pnl_p5` | float | 5th percentile |
+| `pnl_p95` | float | 95th percentile |
+| `volume` | int64 | Total quantity traded |
+| `fill_ratio` | float | For types that submit limit orders |
+| `fees_paid` | float | Positive = paid; negative = rebate received |
+| `markout_1s_ticks` | float | Avg mid displacement 1 second after their fills |
+
+Markout is the key signal: negative for market makers means they were adversely selected (sold to informed flow that pushed the price against them). The gap between effective spread and realized spread *is* adverse selection, quantified.
+
+**`engine` — performance report; latency stats are cumulative and update during progressive rendering, throughput is `null` until complete:**
+
+| Field | Type | Description |
+|---|---|---|
+| `total_commands` | int64 | orders + cancels + modifies |
+| `orders` | int64 | |
+| `cancels` | int64 | |
+| `modifies` | int64 | |
+| `trades` | int64 | Fills generated |
+| `sim_wall_ms` | int64 | Wall-clock time; `null` while incomplete |
+| `throughput_ops_sec` | int64 | total\_commands / sim\_wall\_seconds; `null` while incomplete |
+| `threading` | string | `"A"` \| `"B"` \| `"C"` \| `"D"` |
+| `latency_ns` | object | Per-command-type histograms (see below) |
+| `note` | string | Always: `"engine-internal command processing only; excludes agent logic and I/O"` |
+
+Each entry in `latency_ns` (`overall`, `limit_resting`, `limit_crossing`, `cancel`, `modify`):
+
+| Field | Type | Description |
+|---|---|---|
+| `p50` | int64 | 50th percentile, nanoseconds |
+| `p90` | int64 | 90th percentile |
+| `p99` | int64 | 99th percentile |
+| `p999` | int64 | 99.9th percentile |
+| `max` | int64 | Maximum observed |
+| `bucket_width_ns` | int64 | Histogram bucket width |
+| `buckets` | int64[] | Counts per bucket, for rendering a histogram chart |
+
+**`warnings[]` — non-fatal issues detected during the run:**
+
+| Field | Type | Description |
+|---|---|---|
+| `code` | string | Machine-readable: `"thin_book"`, `"price_dislocation"`, etc. |
+| `message` | string | Human-readable explanation |
+
+#### Progressive rendering
+
+While `complete` is `false`, the frontend polls the result endpoint every 1–2 seconds. Candle and series arrays grow — the backend appends but never revises earlier entries. The chart extends to the right. Engine stats update cumulatively. `market_quality` and `agents` remain `null` until the run finishes.
+
+The backend writes candles in strict time order. A candle at time `t` is finalized before the simulation advances past `t + base_interval_ns`. No global post-processing is applied to the candle array — everything is computable incrementally.
+
+### 5. `DELETE /api/simulations/{id}` — cancel
+
+Signals the simulation to stop, discards partial results.
+
+```json
+{ "run_id": "r_8f3a1b", "status": "cancelled" }
+```
+
+---
+
 ## Scope and honesty
 
-**In scope:** matching engine, full order type set, binary feed, agent-based flow, threading comparison, benchmark harness, microstructure measurement, experiment runner, web interface with a manual trading seat.
+**In scope:** matching engine, full order type set, binary feed, agent-based flow, threading comparison, benchmark harness, microstructure measurement, experiment runner, web interface for market design experiments.
 
 **Out of scope:** multi-venue routing, auctions and halts, cross-asset effects, kernel bypass, anything resembling a real firm's strategies.
 
@@ -179,7 +456,8 @@ sim/          virtual clock, event queue, latency models, agents
 concurrency/  SPSC ring, cache-line utilities, thread pinning
 analytics/    microstructure metrics over recorded feeds
 experiments/  sweep runner, replication, common random numbers, statistics
-gateway/      real-time process: drives engine, serves WebSocket
+api/          HTTP server, JSON serialization, job registry
+gateway/      simulation driver: wires engine, agents, and analytics
 bench/        open-loop benchmark harness and histograms
 tools/        flowgen, replay, reconstruct, sweep CLIs
 tests/        unit, reference implementation, differential fuzz, determinism
