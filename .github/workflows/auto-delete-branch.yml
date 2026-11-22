@@ -1,0 +1,27 @@
+name: Delete branch when issue is closed
+
+on:
+  issues:
+    types: [closed]
+
+jobs:
+  delete-branch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Delete linked branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          # Find branch linked to this issue
+          BRANCH=$(gh issue view "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --json linkedBranches -q '.linkedBranches[0].name')
+
+          if [ -z "$BRANCH" ]; then
+            echo "No linked branch found, skipping"
+            exit 0
+          fi
+
+          echo "Deleting branch: $BRANCH"
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH" || echo "Branch already deleted or not found"
