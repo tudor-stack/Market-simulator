@@ -443,12 +443,25 @@ Signals the simulation to stop, discards partial results.
 
 ### Prerequisites
 
-- **C++20 compiler**: GCC 12+ or Clang 15+
-- **CMake** 3.20+
-- **Python** 3.8+ (for pre-commit hooks)
-- **GitHub CLI** (`gh`): install with `winget install --id GitHub.cli` (Windows) or your package manager, then `gh auth login`
-- **LLVM/Clang tools**: install with `winget install LLVM.LLVM` (Windows) or your package manager — provides `clang-format` and `clang-tidy`
-- **pre-commit**: `pip install pre-commit`
+Install everything before cloning:
+
+| Tool | Windows (`winget`) | Linux / macOS | Why |
+|---|---|---|---|
+| **Git** | `winget install Git.Git` | `apt install git` / `brew install git` | Version control |
+| **CMake** 3.20+ | `winget install Kitware.CMake` | `apt install cmake` / `brew install cmake` | Build system |
+| **C++20 compiler** | `winget install LLVM.LLVM` (includes Clang) or install [MSVC via Visual Studio](https://visualstudio.microsoft.com/) | `apt install g++` / `brew install gcc` | Compiler (GCC 12+ or Clang 15+) |
+| **LLVM/Clang tools** | Included with `LLVM.LLVM` above | `apt install clang-format clang-tidy` / `brew install llvm` | `clang-format` and `clang-tidy` |
+| **Python** 3.8+ | `winget install Python.Python.3.12` | `apt install python3` / `brew install python` | Runs pre-commit hooks |
+| **pre-commit** | `pip install pre-commit` | `pip install pre-commit` | Git hook framework |
+| **GitHub CLI** (`gh`) | `winget install GitHub.cli` | `apt install gh` / `brew install gh` | Issue/PR workflow |
+
+After installing, authenticate the GitHub CLI:
+
+```bash
+gh auth login
+```
+
+> **Windows note:** after installing via `winget`, close and reopen your terminal so the new PATH entries take effect. Verify with `cmake --version`, `clang-format --version`, `gh --version`.
 
 ### Clone and Build
 
@@ -482,6 +495,13 @@ The following hooks run automatically on every commit:
 | `branch-name-check` | Enforces branch naming convention | pre-push |
 
 Configuration lives in `.pre-commit-config.yaml`. C++ style is defined in `.clang-format`. Static analysis checks are defined in `.clang-tidy` (used in CI, not as a local hook).
+
+> **Important:** Some hooks (like `clang-format`, `trailing-whitespace`, `end-of-file-fixer`) automatically modify files to fix issues. When this happens, the commit is aborted with the fixes already applied. You need to stage the modified files and commit again:
+> ```bash
+> git add .
+> git commit -m "your message here"
+> ```
+> The second commit will pass because the files are now correctly formatted.
 
 ### Workflow: Issues, Branches, and PRs
 
