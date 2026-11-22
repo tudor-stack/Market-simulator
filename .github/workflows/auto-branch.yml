@@ -1,0 +1,49 @@
+name: Auto-create branch from issue
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  create-branch:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: write
+    steps:
+      - name: Create branch from issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+        run: |
+          # Get labels
+          LABELS=$(gh issue view "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels -q '.labels[].name')
+
+          # Map label to prefix
+          PREFIX=""
+          if echo "$LABELS" | grep -q "type:feature"; then
+            PREFIX="feature"
+          elif echo "$LABELS" | grep -q "type:bug"; then
+            PREFIX="bugfix"
+          elif echo "$LABELS" | grep -q "type:perf"; then
+            PREFIX="perf"
+          elif echo "$LABELS" | grep -q "type:experiment"; then
+            PREFIX="experiment"
+          elif echo "$LABELS" | grep -q "type:chore"; then
+            PREFIX="chore"
+          else
+            echo "No type label found, skipping branch creation"
+            exit 0
+          fi
+
+          # Convert title: lowercase, spaces to underscores, strip punctuation, truncate to 50 chars
+          NAME=$(echo "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | sed 's/[^a-z0-9_]//g' | sed 's/_*$//' | cut -c1-50)
+
+          BRANCH="${PREFIX}/${ISSUE_NUMBER}_${NAME}"
+          echo "Creating branch: $BRANCH"
+
+          gh issue develop "$ISSUE_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "$BRANCH" \
+            --base main
