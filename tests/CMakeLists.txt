@@ -6,14 +6,15 @@ FetchContent_Declare(
     GIT_TAG        v1.15.2
 )
 
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+
 FetchContent_MakeAvailable(googletest)
 
 add_executable(engine_tests
     engine_test.cpp
 )
 
-target_link_libraries(engine_tests PRIVATE gtest_main)
-target_include_directories(engine_tests PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+target_link_libraries(engine_tests PRIVATE GTest::gtest_main si::engine)
 
 include(GoogleTest)
 gtest_discover_tests(engine_tests)
