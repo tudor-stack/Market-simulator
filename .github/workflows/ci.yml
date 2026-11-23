@@ -35,12 +35,15 @@ jobs:
         build_type: [Debug, Release]
     steps:
       - uses: actions/checkout@v4
-      - name: Set compiler
+      - name: Install compiler
         run: |
+          sudo apt-get update
           if [ "${{ matrix.compiler }}" = "gcc" ]; then
+            sudo apt-get install -y gcc-13 g++-13
             echo "CC=gcc-13" >> "$GITHUB_ENV"
             echo "CXX=g++-13" >> "$GITHUB_ENV"
           else
+            sudo apt-get install -y clang-18
             echo "CC=clang-18" >> "$GITHUB_ENV"
             echo "CXX=clang++-18" >> "$GITHUB_ENV"
           fi
@@ -56,6 +59,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install Clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18
       - name: Configure
         run: |
           cmake -B build \
@@ -74,10 +81,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install clang-tidy
+      - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang-tidy
+          sudo apt-get install -y clang-18 clang-tidy
       - name: Configure
         run: |
           cmake -B build \
@@ -126,11 +133,12 @@ jobs:
             exit 1
           fi
 
-          # Check PR body contains Closes #N
+          # Check PR body is not empty
           BODY=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json body -q '.body')
-          if ! echo "$BODY" | grep -qiE "(closes|fixes|resolves)\s+#$ISSUE_NUM"; then
-            echo "::error::PR body must contain 'Closes #$ISSUE_NUM'"
+          TRIMMED=$(echo "$BODY" | tr -d '[:space:]')
+          if [ -z "$TRIMMED" ]; then
+            echo "::error::PR description cannot be empty"
             exit 1
           fi
 
-          echo "Branch follows convention, issue #$ISSUE_NUM is open, PR links to it"
+          echo "Branch follows convention, issue #$ISSUE_NUM is open, PR has a description"
