@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format
+          pip install pre-commit
+      - name: Run all hooks
+        run: pre-commit run --all-files --show-diff-on-failure
+
+  build-and-test:
+    name: Build & Test (${{ matrix.compiler }}, ${{ matrix.build_type }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+        build_type: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set compiler
+        run: |
+          if [ "${{ matrix.compiler }}" = "gcc" ]; then
+            echo "CC=gcc" >> "$GITHUB_ENV"
+            echo "CXX=g++" >> "$GITHUB_ENV"
+          else
+            echo "CC=clang" >> "$GITHUB_ENV"
+            echo "CXX=clang++" >> "$GITHUB_ENV"
+          fi
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+      - name: Build
+        run: cmake --build build --parallel "$(nproc)"
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  sanitizers:
+    name: Sanitizers (ASan + UBSan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+      - name: Build
+        run: cmake --build build --parallel "$(nproc)"
+      - name: Test under sanitizers
+        run: ctest --test-dir build --output-on-failure
+
+  clang-tidy:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 clang-tidy
+      - name: Configure
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER=clang-18 \
+            -DCMAKE_CXX_COMPILER=clang++-18 \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+      - name: Build
+        run: cmake --build build --parallel "$(nproc)"
+      - name: Run clang-tidy
+        run: |
+          FILES=$(find . -path ./build -prune -o -path ./third_party -prune -o \( -name '*.cpp' -o -name '*.h' \) -print)
+          if [ -z "$FILES" ]; then
+            echo "No source files found, skipping"
+            exit 0
+          fi
+          echo "$FILES" | xargs clang-tidy -p build
+
+  ticket-check:
+    name: Ticket & Branch Check
+    runs-on: ubuntu-latest
+    permissions:
+      issues: read
+      pull-requests: read
+    steps:
+      - name: Verify branch and issue linkage
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          BRANCH="${{ github.head_ref }}"
+
+          # Check branch name format
+          if ! echo "$BRANCH" | grep -qE '^(feature|bugfix|perf|experiment|chore)/[0-9]+_[a-z0-9_]+$'; then
+            echo "::error::Branch '$BRANCH' does not match convention: <type>/<number>_<name>"
+            exit 1
+          fi
+
+          # Extract issue number from branch name
+          ISSUE_NUM=$(echo "$BRANCH" | sed 's|.*/\([0-9]*\)_.*|\1|')
+
+          # Check issue exists and is open
+          STATE=$(gh issue view "$ISSUE_NUM" --repo "$GITHUB_REPOSITORY" --json state -q '.state')
+          if [ "$STATE" != "OPEN" ]; then
+            echo "::error::Issue #$ISSUE_NUM is not open (state: $STATE)"
+            exit 1
+          fi
+
+          # Check PR body is not empty
+          BODY=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json body -q '.body')
+          TRIMMED=$(echo "$BODY" | tr -d '[:space:]')
+          if [ -z "$TRIMMED" ]; then
+            echo "::error::PR description cannot be empty"
+            exit 1
+          fi
+
+          echo "Branch follows convention, issue #$ISSUE_NUM is open, PR has a description"
