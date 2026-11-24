@@ -15,5 +15,5 @@ Checks: >
 
 WarningsAsErrors: ""
 
-HeaderFilterRegex: "src/.*"
+HeaderFilterRegex: "(include/si|src)/.*"
 ...
