@@ -7,18 +7,18 @@ repos:
       - id: end-of-file-fixer
       - id: check-yaml
       - id: check-json
-        exclude: "^$"
+        exclude: '^web/tsconfig.*\.json$'
 
-  # --- C++ formatting (uses your system clang-format) ---
-  - repo: local
+  # --- C++ formatting (pinned clang-format, downloaded by pre-commit) ---
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v18.1.8
     hooks:
       - id: clang-format
-        name: clang-format
-        entry: clang-format -i --style=file
-        language: system
         types_or: [c, c++]
         exclude: "third_party/"
 
+  - repo: local
+    hooks:
       # --- Commit message must match: type/number_name: message ---
       - id: commit-msg-format
         name: commit message format check

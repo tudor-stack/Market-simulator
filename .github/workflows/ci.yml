@@ -18,10 +18,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-format
-          pip install pre-commit
+        run: pip install pre-commit
       - name: Run all hooks
         run: pre-commit run --all-files --show-diff-on-failure
 
@@ -95,6 +92,23 @@ jobs:
             exit 0
           fi
           echo "$FILES" | xargs clang-tidy -p build
+
+  web:
+    name: Web Lint & Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
 
   ticket-check:
     name: Ticket & Branch Check
